@@ -12,6 +12,7 @@ import requests
 from cryptography.hazmat.primitives.asymmetric.padding import PKCS1v15
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
+from LayerOne.extra.handler import Handler
 from LayerOne.network.conn_wrapper import ConnectionWrapper
 from LayerOne.network.packet import Packet
 from LayerOne.types.byte_array import ByteArray
@@ -24,8 +25,9 @@ Host = Tuple [str, int] # IP, port
 ProxyAuth = Tuple [str, str] # UUID, access token
 
 class Server:
-    def __init__ (self, host: Host = ("0.0.0.0", 25566), proxy: bool = True, proxy_target: Optional [Host] = ("mc.hypixel.net", 25565), proxy_auth: Optional [ProxyAuth] = None):
-        colorama.init ()
+    def __init__ (self, quiet: bool = False, host: Host = ("0.0.0.0", 25566), proxy: bool = True, proxy_target: Optional [Host] = ("mc.hypixel.net", 25565), proxy_auth: Optional [ProxyAuth] = None, handler_class: type (Handler) = None):
+        self.quiet = quiet
+        if not quiet: colorama.init ()
 
         self.proxy = proxy
         if proxy:
@@ -33,6 +35,7 @@ class Server:
             self.proxy_target = proxy_target
             if proxy_auth is None: raise Exception ("authentication (uuid, access_token) tuple is required when proxy is enabled")
             self.proxy_auth = proxy_auth
+        self.handler_class = handler_class
         server = socket.socket (family = socket.AF_INET, type = socket.SOCK_STREAM)
         server.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind (host)
@@ -42,7 +45,8 @@ class Server:
             Thread (target = self.handler_serverbound, args = (connection, address)).start ()
     def handler_serverbound (self, native_client_connection: socket.socket, address):
         log_lock = threading.Lock ()
-        def c2s_print (message: Any, generic: bool = True, meta: bool = False) -> None:
+        def c2s_print (message: Any, generic: bool = True, meta: bool = False, force: bool = False) -> None:
+            if self.quiet and not force: return
             if generic:
                 if meta:
                     out = f"{colorama.Style.DIM}<-- ### {colorama.Fore.GREEN}{message}{colorama.Fore.RESET}{colorama.Style.NORMAL}"
@@ -51,8 +55,10 @@ class Server:
             else:
                 out = f"{colorama.Style.BRIGHT}<-- {colorama.Fore.GREEN}s{current_state ['id']} id{hex (packet_id)} {message}{colorama.Fore.RESET}{colorama.Style.NORMAL}"
             with log_lock: print (out)
+        def force_c2s_print (*args, **kwargs): c2s_print (*args, **kwargs, force = True)
 
         c2s_print ("connected", meta = True)
+        handler_instance: Optional [Handler] = self.handler_class () if self.handler_class is not None else None
 
         client_connection = ConnectionWrapper (native_client_connection)
 
@@ -67,8 +73,14 @@ class Server:
             "compression_threshold": -1
         }
         if self.proxy:
-            clientbound_handler_thread = Thread (target = self.handler_clientbound, args = (log_lock, current_state, client_connection, server_connection))
+            clientbound_handler_thread = Thread (target = self.handler_clientbound, args = (log_lock, current_state, client_connection, server_connection, handler_instance))
             clientbound_handler_thread.start ()
+
+            def to_client (_packet_id, _data):
+                Packet.write (client_connection, _packet_id, _data)
+            def to_server (_packet_id, _data):
+                Packet.write (server_connection, _packet_id, _data,
+                              compression_threshold = current_state ["compression_threshold"])
         else:
             packet_number = 0
             in_status = False
@@ -79,7 +91,7 @@ class Server:
                 c2s_print (f"data {Server._buffer_to_str (data)}", generic = False)
 
                 if self.proxy:
-                    def pass_through (): Packet.write (server_connection, packet_id, data, compression_threshold = current_state ["compression_threshold"])
+                    def pass_through (): to_server (packet_id, data)
 
                     if current_state ["id"] == 0: # Handshaking, here we just need to read the next state to stay up to date
                         if packet_id != 0x00: raise ProtocolException (f"Unrecognized packet ID {packet_id} in Handshaking state")
@@ -97,8 +109,14 @@ class Server:
                         else:
                             raise ProtocolException (f"Unhandled login packet ID {packet_id}")
                     elif current_state ["id"] == 3: # Play, just pass through packets
-                        c2s_print ("passing through generic play packet")
-                        pass_through ()
+                        if handler_instance is not None:
+                            c2s_print ("calling handler for generic play packet")
+                            should_pass_through = handler_instance.client_to_server (current_state, force_c2s_print, to_client, to_server, packet_id, data)
+                            if should_pass_through:
+                                pass_through ()
+                        else:
+                            c2s_print ("passing through generic play packet")
+                            pass_through ()
                     else:
                         raise ProtocolException (f"Unknown state {current_state ['id']}")
                     continue
@@ -167,8 +185,11 @@ class Server:
         if self.proxy:
             server_connection.ensure_closed ()
             clientbound_handler_thread.join ()
-    def handler_clientbound (self, log_lock: threading.Lock, current_state: dict, client_connection: ConnectionWrapper, server_connection: ConnectionWrapper):
-        def s2c_print (message: Any, generic: bool = True, meta: bool = False) -> None:
+        if current_state ["id"] == 3 and handler_instance is not None: handler_instance.disconnected ()
+        if not self.quiet: colorama.deinit ()
+    def handler_clientbound (self, log_lock: threading.Lock, current_state: dict, client_connection: ConnectionWrapper, server_connection: ConnectionWrapper, handler_instance: Handler):
+        def s2c_print (message: Any, generic: bool = True, meta: bool = False, force: bool = False) -> None:
+            if self.quiet and not force: return
             if generic:
                 if meta:
                     out = f"{colorama.Style.DIM}--> ### {colorama.Fore.RED}{message}{colorama.Fore.RESET}{colorama.Style.NORMAL}"
@@ -177,13 +198,20 @@ class Server:
             else:
                 out = f"{colorama.Style.BRIGHT}--> {colorama.Fore.RED}s{current_state ['id']} id{hex (packet_id)} {message}{colorama.Fore.RESET}{colorama.Style.NORMAL}"
             with log_lock: print (out)
+        def force_s2c_print (*args, **kwargs): s2c_print (*args, **kwargs, force = True)
 
         s2c_print ("connected", meta = True)
+
+        def to_client (_packet_id, _data):
+            Packet.write (client_connection, _packet_id, _data)
+        def to_server (_packet_id, _data):
+            Packet.write (server_connection, _packet_id, _data,
+                          compression_threshold = current_state ["compression_threshold"])
         while True:
             try:
                 packet_id, data = Packet.read (server_connection, compression_threshold = current_state ["compression_threshold"])
                 s2c_print (f"data {Server._buffer_to_str (data)}", generic = False)
-                def pass_through (): Packet.write (client_connection, packet_id, data)
+                def pass_through (): to_client (packet_id, data)
 
                 if current_state ["id"] == 0: # Handshaking
                     raise ProtocolException ("Clientbound packet received in handshaking state")
@@ -192,7 +220,7 @@ class Server:
                 elif current_state ["id"] == 2: # Login, we need to handle encryption + compression setup
                     if packet_id == 0x01:
                         s2c_print (f"proxy detected encryption request")
-                        server_id, public_key_data, verify_token = Packet.decode_fields (data, [String, ByteArray, ByteArray])
+                        server_id, public_key_data, verify_token = Packet.decode_fields (data, (String, ByteArray, ByteArray))
                         s2c_print (f"public key {public_key_data} (len {len (public_key_data)}) verify token {verify_token} (len {len (verify_token)})")
 
                         shared_secret = secrets.token_bytes (16)
@@ -224,22 +252,28 @@ class Server:
                         s2c_print ("encryption enabled")
                         Packet.write (server_connection, 0x01, encryption_response_data, force_dont_encrypt = True)
                     elif packet_id == 3:
-                        compression_threshold = Packet.decode_fields (data, [VarInt]) [0]
+                        compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     elif packet_id == 2:
                         s2c_print ("login success packet detected")
                         current_state ["id"] = 3
+                        if handler_instance is not None: handler_instance.connected ()
                         pass_through ()
                     else: raise ProtocolException ("unknown login packet")
                 elif current_state ["id"] == 3:
                     if packet_id == 0x46:
-                        compression_threshold = Packet.decode_fields (data, [VarInt]) [0]
+                        compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     else:
-                        s2c_print ("passing through generic play packet")
-                        pass_through ()
+                        s2c_print ("calling handler for generic play packet")
+                        if handler_instance is not None:
+                            should_pass_through = handler_instance.server_to_client (current_state, force_s2c_print, to_client, to_server, packet_id, data)
+                            if should_pass_through: pass_through ()
+                        else:
+                            s2c_print ("passing through generic play packet")
+                            pass_through ()
                 else:
                     raise ProtocolException (f"unhandled state {current_state ['id']}")
             except EOFError:

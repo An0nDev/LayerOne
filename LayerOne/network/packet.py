@@ -38,7 +38,7 @@ class Packet:
         data = conn_wrapper.read (data_length)
         return packet_id, data
     @staticmethod
-    def decode_fields (data: bytes, spec: list) -> (list, int):
+    def decode_fields (data: bytes, spec: Tuple) -> (list, int):
         all_decoded = []
         total_length = 0
         remainder: bytes = data

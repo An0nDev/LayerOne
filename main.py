@@ -1,3 +1,4 @@
+import importlib
 import json
 import sys
 
@@ -19,6 +20,13 @@ def parse_host (_host) -> (str, int):
     partitioned = _host.rpartition (':') # "host:with:colons:port" --> ["host:with:colons", ':', "port"]
     return partitioned [0], int (partitioned [2])
 
+def parse_handler_class (_handler) -> type:
+    partitioned = _handler.rpartition (':')
+    module = importlib.import_module (partitioned [0])
+    _class = module.__getattribute__ (partitioned [2])
+    return _class
+
 host = parse_host (sys.argv [2])
 proxy_target = parse_host (sys.argv [3])
-Server (host = host, proxy = True, proxy_target = proxy_target, proxy_auth = proxy_auth)
+handler_class = parse_handler_class (sys.argv [4]) if len (sys.argv) >= 5 else None
+Server (quiet = handler_class is not None, host = host, proxy = True, proxy_target = proxy_target, proxy_auth = proxy_auth, handler_class = handler_class)
