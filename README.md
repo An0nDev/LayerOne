@@ -22,6 +22,7 @@ Your credentials are necessary since part of the encryption process mandates the
 
 Since the encryption is handled as part of the proxy rather than being passed through (thus allowing the proxy to read and write encrypted packets), we need to have an access token to provide as part of the request.
 ## usage
+***warning warning warning: here be dragons!*** the API is subject to change without notice; consult the below reference implementation if your code breaks after an update
 ### running the proxy
 `python3 main.py path_to_auth_json host proxy_target` where:
 - `path_to_auth_json` is the path relative to the current directory where `auth.json` is stored
@@ -35,12 +36,13 @@ if run like ^, packet information will be printed to the console.
 
 to implement custom behavior when a play packet is received from the client or server, subclass `LayerOne.extra.handler.Handler` with a class such as this one (`ChatModifierHandler` from `example_handlers/chat_modifier.py`):
 ```python
-from LayerOne.extra.handler import PrintFunc, SendFunc, Handler
+from LayerOne.extra.handler import Host, PrintFunc, SendFunc, Handler
 from LayerOne.network.packet import Packet
 from LayerOne.types.string import String
 
 class ChatModifierHandler (Handler):
-    def connected (self): pass
+    def __init__ (self, client_address: Host): pass
+    def ready (self): pass
     def client_to_server (self, current_state: dict, print_func: PrintFunc, to_client_func: SendFunc, to_server_func: SendFunc, packet_id: int, packet_data: bytes) -> bool:
         if packet_id == 0x01: # Chat Message
             chat_message: str = Packet.decode_fields (packet_data, (String,)) [0]
@@ -55,7 +57,7 @@ class ChatModifierHandler (Handler):
         return True # pass through unmodified
     def disconnected (self): pass
 ```
-`connected` and `disconnected` are called when a (non-server-list-ping) client completes login and disconnects, respectively. They accept no arguments and the return value is discarded.
+`__init__`, `ready`, and `disconnected` are called when a client connects, completes login, and disconnects, respectively. Only `__init__` accepts any arguments (`Host` is an `(ip, port)` tuple), and the return value is discarded.
 (They're mainly meant for handlers to do any startup/cleanup necessary; `disconnected` is guaranteed to be called unless the process is killed.)
 
 `client_to_server` and `server_to_client` are called when a packet is sent from the client to the server and from the server to the client, respectively, with the following caveats:
