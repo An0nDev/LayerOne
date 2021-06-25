@@ -61,7 +61,12 @@ class Proxy:
         client_connection = ConnectionWrapper (native_client_connection)
 
         native_server_connection = socket.socket (family = socket.AF_INET, type = socket.SOCK_STREAM)
-        native_server_connection.connect (self.target)
+        try:
+            native_server_connection.connect (self.target)
+        except Exception as exception:
+            c2s_print (f"error when connecting to server: {repr (exception)}\n{traceback.format_exc ()}", end = "", meta = True, force = True)
+            client_connection.ensure_closed ()
+            return
         server_connection = ConnectionWrapper (native_server_connection)
 
         current_state = {
@@ -93,7 +98,7 @@ class Proxy:
                     proto_ver, server_addr, server_port, next_state = Packet.decode_fields (data, (VarInt, String, UShort, VarInt))
                     c2s_print (f"proxy detected handshake, switching to state {next_state}")
                     current_state ["id"] = next_state
-                    pass_through ()
+                    to_server (0x00, Packet.encode_fields ((proto_ver, VarInt), (self.target [0], String), (self.target [1], UShort), (next_state, VarInt)))
                 elif current_state ["id"] == 1: # Status, we don't need any special behavior here
                     pass_through ()
                 elif current_state ["id"] == 2: # Login, we need to handle encryption + compression setup
