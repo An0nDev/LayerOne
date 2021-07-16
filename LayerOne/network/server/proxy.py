@@ -77,9 +77,7 @@ class Proxy:
         }
 
         def to_client (_packet_id, _data, **kwargs):
-            print (f"to_client with threshold {current_state ['compression_threshold']}")
-            Packet.write (client_connection, _packet_id, _data, **kwargs)
-                          # compression_threshold = current_state ["compression_threshold"], **kwargs)
+            Packet.write (client_connection, _packet_id, _data, compression_threshold = current_state ["compression_threshold"], **kwargs)
         def to_server (_packet_id, _data, **kwargs):
             Packet.write (server_connection, _packet_id, _data,
                           compression_threshold = current_state ["compression_threshold"], **kwargs)
@@ -90,8 +88,7 @@ class Proxy:
 
         while True:
             try:
-                # packet_id, data = Packet.read (client_connection, compression_threshold = current_state ["compression_threshold"])
-                packet_id, data = Packet.read (client_connection)
+                packet_id, data = Packet.read (client_connection, compression_threshold = current_state ["compression_threshold"])
                 c2s_print (f"data {Proxy._buffer_to_str (data)}", generic = False)
 
                 def pass_through (): to_server (packet_id, data)
@@ -200,7 +197,7 @@ class Proxy:
                         to_server (0x01, encryption_response_data, force_dont_encrypt = True)
                     elif packet_id == 3:
                         compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
-                        # pass_through ()
+                        pass_through ()
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     elif packet_id == 2:
@@ -215,7 +212,7 @@ class Proxy:
                 elif current_state ["id"] == 3:
                     if packet_id == 0x46:
                         compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
-                        # pass_through ()
+                        pass_through ()
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     else:
