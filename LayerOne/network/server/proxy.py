@@ -220,7 +220,7 @@ class Proxy:
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     else:
-                        if handler_instance is not None and False:
+                        if handler_instance is not None:
                             s2c_print ("calling handler for generic play packet")
                             should_pass_through = handler_instance.server_to_client (current_state, force_s2c_print, to_client, to_server, packet_id, data)
                             if should_pass_through: pass_through ()
