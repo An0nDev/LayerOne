@@ -53,20 +53,21 @@ class Packet:
         def _write_data (_data: bytes): conn_wrapper.write (_data, force_dont_encrypt = force_dont_encrypt)
 
         packet_id_buffer, packet_id_length = Utils.int_to_varint_buffer (packet_id)
+        uncompressed_source = packet_id_buffer + data
+        uncompressed_source_length = packet_id_length + len (data)
 
         if compression_threshold <= 0:
-            length_buffer, length_length = Utils.int_to_varint_buffer (packet_id_length + len (data))
+            length_buffer, length_length = Utils.int_to_varint_buffer (uncompressed_source_length)
 
             _write_data (length_buffer)
-            _write_data (packet_id_buffer)
-            _write_data (data)
+            _write_data (uncompressed_source)
         else:
             if len (data) < compression_threshold:
                 data_length_buffer, data_length_length = Utils.int_to_varint_buffer (0)
                 packet = packet_id_buffer + data
             else:
-                data_length_buffer, data_length_length = Utils.int_to_varint_buffer (len (data))
-                packet = zlib.compress (packet_id_buffer + data)
+                data_length_buffer, data_length_length = Utils.int_to_varint_buffer (uncompressed_source_length)
+                packet = zlib.compress (uncompressed_source)
             packet_length_buffer, packet_length_length = Utils.int_to_varint_buffer (data_length_length + len (packet))
             _write_data (packet_length_buffer)
             _write_data (data_length_buffer)
