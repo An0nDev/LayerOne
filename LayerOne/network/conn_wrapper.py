@@ -1,5 +1,6 @@
 import io
 import socket
+import threading
 from typing import Union
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -18,6 +19,8 @@ class ConnectionWrapper:
         self.encryption_enabled = False
         self.encryptor = None
         self.decryptor = None
+
+        self.write_lock = threading.Lock ()
     def setup_encryption (self, encryption_key: bytes):
         cipher = Cipher (algorithm = algorithms.AES (encryption_key), mode = modes.CFB8 (encryption_key))
         self.encryptor = cipher.encryptor ()
@@ -34,7 +37,8 @@ class ConnectionWrapper:
     def write_one (self, value) -> None:
         self.write (bytes ([value]))
     def write (self, data, force_dont_encrypt = False) -> None:
-        self.client.send (self.encryptor.update (data) if (self.encryption_enabled and not force_dont_encrypt) else data)
+        with self.write_lock:
+            self.client.send (self.encryptor.update (data) if (self.encryption_enabled and not force_dont_encrypt) else data)
     def ensure_closed (self) -> None:
         try:
             self.client.shutdown (socket.SHUT_RDWR)

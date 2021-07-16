@@ -1,4 +1,5 @@
 import json
+from threading import Lock
 from typing import Optional
 
 from LayerOne.extra.custom_handler import Host, SendFunc, CustomHandler
@@ -10,7 +11,7 @@ from LayerOne.types.string import String
 from LayerOne.types.varint import VarInt
 
 class ServerListPing (CustomHandler):
-    def __init__ (self, client_address: Host):
+    def __init__ (self, initial_storage: dict, runtime_storage_lock: Lock, runtime_storage: dict, client_address: Host):
         self.packet_number = 0
         self.in_status = False
     def packet_received (self, to_client_func: SendFunc, packet_id: int, packet_data: bytes) -> Optional [bool]:
@@ -59,4 +60,4 @@ class ServerListPing (CustomHandler):
     def disconnected (self, initiated_by_server: bool): pass
 
 if __name__ == "__main__":
-    Custom (quiet = False, host = ("0.0.0.0", 25568), handler_class = ServerListPing)
+    Custom (quiet = False, host = ("0.0.0.0", 25568), initial_storage = {}, handler_class = ServerListPing)

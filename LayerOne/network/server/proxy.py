@@ -5,7 +5,7 @@ import socket
 import threading
 import traceback
 from threading import Thread
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, Union, Callable
 
 import colorama
 import requests
@@ -76,11 +76,13 @@ class Proxy:
             "compression_threshold": -1
         }
 
-        def to_client (_packet_id, _data):
-            Packet.write (client_connection, _packet_id, _data)
-        def to_server (_packet_id, _data):
+        def to_client (_packet_id, _data, **kwargs):
+            print (f"to_client with threshold {current_state ['compression_threshold']}")
+            Packet.write (client_connection, _packet_id, _data, **kwargs)
+                          # compression_threshold = current_state ["compression_threshold"], **kwargs)
+        def to_server (_packet_id, _data, **kwargs):
             Packet.write (server_connection, _packet_id, _data,
-                          compression_threshold = current_state ["compression_threshold"])
+                          compression_threshold = current_state ["compression_threshold"], **kwargs)
 
         clientbound_handler_thread = Thread (target = self.handler_clientbound, args = (
         log_lock, current_state, client_connection, server_connection, handler_instance, to_client, to_server))
@@ -88,6 +90,7 @@ class Proxy:
 
         while True:
             try:
+                # packet_id, data = Packet.read (client_connection, compression_threshold = current_state ["compression_threshold"])
                 packet_id, data = Packet.read (client_connection)
                 c2s_print (f"data {Proxy._buffer_to_str (data)}", generic = False)
 
@@ -136,7 +139,7 @@ class Proxy:
         clientbound_handler_thread.join ()
         if current_state ["id"] == 3 and handler_instance is not None: handler_instance.disconnected ()
         if not self.quiet: colorama.deinit ()
-    def handler_clientbound (self, log_lock: threading.Lock, current_state: dict, client_connection: ConnectionWrapper, server_connection: ConnectionWrapper, handler_instance: Handler, to_client: SendFunc, to_server: SendFunc):
+    def handler_clientbound (self, log_lock: threading.Lock, current_state: dict, client_connection: ConnectionWrapper, server_connection: ConnectionWrapper, handler_instance: Handler, to_client: SendFunc, to_server: Union [SendFunc, Callable]):
         def s2c_print (message: Any, end: str = "\n", generic: bool = True, meta: bool = False, force: bool = False) -> None:
             if self.quiet and not force: return
             if generic:
@@ -194,9 +197,10 @@ class Proxy:
                         encryption_response_data = Packet.encode_fields ((encrypted_shared_secret, ByteArray), (encrypted_verify_token, ByteArray))
                         server_connection.setup_encryption (shared_secret)
                         s2c_print ("encryption enabled")
-                        Packet.write (server_connection, 0x01, encryption_response_data, force_dont_encrypt = True)
+                        to_server (0x01, encryption_response_data, force_dont_encrypt = True)
                     elif packet_id == 3:
                         compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
+                        # pass_through ()
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     elif packet_id == 2:
@@ -204,15 +208,19 @@ class Proxy:
                         current_state ["id"] = 3
                         if handler_instance is not None: handler_instance.ready ()
                         pass_through ()
+                    elif packet_id == 0:
+                        s2c_print ("disconnect packet detected")
+                        pass_through ()
                     else: raise ProtocolException ("unknown login packet")
                 elif current_state ["id"] == 3:
                     if packet_id == 0x46:
                         compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
+                        # pass_through ()
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     else:
-                        s2c_print ("calling handler for generic play packet")
-                        if handler_instance is not None:
+                        if handler_instance is not None and False:
+                            s2c_print ("calling handler for generic play packet")
                             should_pass_through = handler_instance.server_to_client (current_state, force_s2c_print, to_client, to_server, packet_id, data)
                             if should_pass_through: pass_through ()
                         else:
