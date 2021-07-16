@@ -216,7 +216,7 @@ class Proxy:
                 elif current_state ["id"] == 3:
                     if packet_id == 0x46:
                         compression_threshold = Packet.decode_fields (data, (VarInt,)) [0]
-                        pass_through ()
+                        # pass_through ()
                         current_state ["compression_threshold"] = compression_threshold
                         s2c_print (f"compression threshold updated to {compression_threshold}")
                     else:
