@@ -27,11 +27,9 @@ class Client:
         self.receive_thread = Thread (target = self._receive_loop)
         self.receive_thread.start ()
     def enable_compression (self, compression_threshold: int): # Should only be called in Login state (prior to sending Login Success)
-        print (f"ENABLING COMPRESSION WITH THRESHOLD {compression_threshold}")
         self.send (0x03, Packet.encode_fields ((compression_threshold, VarInt))) # Enable Compression
         self.compression_threshold = compression_threshold
     def send (self, _packet_id: int, _data: bytes):
-        print (f"OUTGOING PACKET SIZE {len (_data)}")
         Packet.write (self.connection, _packet_id, _data, compression_threshold = self.compression_threshold)
     def _receive_loop (self):
         def meta_print (message, **kwargs):
@@ -57,7 +55,7 @@ class Client:
                 meta_print ("reset")
                 break
             except BrokenPipeError:
-                meta_print ("broken pipe (exception in other direction?)")
+                meta_print ("broken pipe")
                 break
             except Exception as exception:
                 meta_print (f"other error: {repr (exception)}")

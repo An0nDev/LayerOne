@@ -13,7 +13,7 @@ from LayerOne.types.common import ProtocolException
 from LayerOne.types.native import Byte, Int, Boolean, UShort, UByte, UShortLE
 from LayerOne.types.string import String
 from LayerOne.types.varint import VarInt
-from LayerOne.network.extra.world_manipulation import world_to_map_chunk_bulk_data
+from LayerOne.network.extra.world_manipulation import world_to_map_chunk_bulk_datas
 
 class WorldDownloader (Handler):
     def __init__ (self, client_address: Host):
@@ -53,7 +53,6 @@ class WorldDownloader (Handler):
             return False
         return True
     def server_to_client (self, current_state: dict, print_func: PrintFunc, to_client_func: SendFunc, to_server_func: SendFunc, packet_id: int, packet_data: bytes) -> bool:
-        return True
         if packet_id == 0x01:
             player_eid, gamemode, dimension, difficulty, max_players, level_type, reduced_debug_info = Packet.decode_fields (packet_data, (Int, UByte, Byte, UByte, UByte, String, Boolean))
             self.has_dimension = True
@@ -136,6 +135,8 @@ class WorldDownloader (Handler):
 
             return column_block_data, column_biome_data
 
+        updated_chunk_columns = []
+
         if packet_id == 0x21:
             print_func (f"--- (SINGLE) chunk data, len {len (packet_data)}")
 
@@ -155,12 +156,15 @@ class WorldDownloader (Handler):
                     if new:
                         print ("new column")
                         self.chunk_columns [chunk_x, chunk_z] = column
+                        updated_chunk_columns.append ((chunk_x, chunk_z))
                     else:
                         print ("updated column")
                         self.chunk_columns [chunk_x, chunk_z] [0].update (column [0])
+                        updated_chunk_columns.append ((chunk_x, chunk_z))
             leftover = get_leftover (reader)
             if leftover > 0: raise ProtocolException (f"we had {leftover} bytes left in the single chunk packet!")
             print_func ("--- end of single")
+            should_roundtrip = False
         elif packet_id == 0x26:
             print_func (f"--- (MULTI) map chunk bulk, len {len (packet_data)}")
 
@@ -182,6 +186,7 @@ class WorldDownloader (Handler):
                 column = read_chunk_column (reader, primary_bit_mask, has_light, True, chunk_x, chunk_z)
                 if len (column [0]) > 0:
                     new_chunk_columns [chunk_x, chunk_z] = column
+                    updated_chunk_columns.append ((chunk_x, chunk_z))
 
             with self.chunk_columns_lock:
                 self.chunk_columns.update (new_chunk_columns)
@@ -189,24 +194,22 @@ class WorldDownloader (Handler):
             leftover = get_leftover (reader)
             if leftover > 0: raise ProtocolException (f"we had {leftover} bytes left in the multi chunk packet!")
             print_func ("--- end of multi")
+            should_roundtrip = True
+        else: return True
 
-            to_client_func (0x26, world_to_map_chunk_bulk_data ({
-                "dimension": self.dimension,
-                "chunk_columns": new_chunk_columns
-            }))
-            return True
+        with self.chunk_columns_lock:
+            actual_updated_chunk_columns = {chunk_coords: self.chunk_columns [chunk_coords] for chunk_coords in updated_chunk_columns}
 
-            with self.chunk_columns_lock:
-                recreated = world_to_map_chunk_bulk_data ({
-                    "dimension": self.dimension,
-                    "chunk_columns": chunk_columns
-                })
-                if packet_data != recreated:
-                    with open ("packet_data.dmp", "wb+") as packet_data_file: packet_data_file.write (packet_data)
-                    with open ("recreated.dmp", "wb+") as recreated_file: recreated_file.write (recreated)
-                    raise ProtocolException (f"original packet data does not match recreated (og len {len (packet_data)}, new len {len (recreated)})")
-        return True
+        datas =world_to_map_chunk_bulk_datas ({
+            "dimension": self.dimension,
+            "chunk_columns": actual_updated_chunk_columns
+        })
+        assert len (datas) == 1
+        data = datas [0]
+        to_client_func (0x26, data)
+
+        return False
     def disconnected (self): pass
 
 if __name__ == "__main__":
-    Proxy (quiet = False, host = ("0.0.0.0", 25567), target = ("localhost", 25566), auth = auth_from_file ("../auth.json"), handler_class = WorldDownloader)
+    Proxy (quiet = True, host = ("0.0.0.0", 25567), target = ("localhost", 25566), auth = auth_from_file ("../auth.json"), handler_class = WorldDownloader)
