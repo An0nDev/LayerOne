@@ -1,0 +1,1 @@
+pyinstaller --onefile --windowed hypixel_proxy_gui.spec

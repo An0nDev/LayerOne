@@ -1,3 +1,5 @@
+import io
+import json
 from multiprocessing import Pool
 from typing import Optional
 
@@ -6,10 +8,11 @@ import requests
 import re
 
 from LayerOne.extra.handler import Host, PrintFunc, SendFunc, Handler
+from LayerOne.network.conn_wrapper import DummySocket, ConnectionWrapper
 from LayerOne.network.extra.chat_formatting import chat_to_plain_str
 from LayerOne.network.packet import Packet
 from LayerOne.types.chat import Chat
-from LayerOne.types.native import Byte
+from LayerOne.types.native import Byte, Int, UByte
 from LayerOne.types.string import String
 
 HYPIXEL_API_KEY = "54f16ef3-1854-4753-af20-b196f937cb6f"
@@ -75,6 +78,14 @@ class HypixelProxyHandler (Handler):
         self.finding_f_list = False
     def ready (self): pass
     def client_to_server (self, current_state: dict, print_func: PrintFunc, to_client_func: SendFunc, to_server_func: SendFunc, packet_id: int, packet_data: bytes) -> bool:
+        if packet_id == 0x17:
+            plugin_channel, _plugin_channel_len = String.read (ConnectionWrapper (DummySocket (io.BytesIO (packet_data))))
+            data = packet_data [_plugin_channel_len:]
+            print_func (f"PLUGIN TO SERVER plugin_channel={plugin_channel} data={data}")
+            # return False
+        if packet_id in [0x00]: return True # Keep Alive
+        # print_func (f"{packet_id} {len (packet_data)}")
+        # if packet_id == 0x01: print_func (f"--- CHAT MESSAGE {packet_data} ---")
         if packet_id == 0x01: # Chat Message
             chat_message: str = Packet.decode_fields (packet_data, (String,)) [0]
 
@@ -93,6 +104,45 @@ class HypixelProxyHandler (Handler):
             return True
         return True # pass through other c2s packets
     def server_to_client (self, current_state: dict, print_func: PrintFunc, to_client_func: SendFunc, to_server_func: SendFunc, packet_id: int, packet_data: bytes) -> bool:
+        s2c_plugin_message_packet_id = 0x3F
+        if packet_id == s2c_plugin_message_packet_id:
+            plugin_channel, _plugin_channel_len = String.read (ConnectionWrapper (DummySocket (io.BytesIO (packet_data)))) # read name of plugin channel
+            data = packet_data [_plugin_channel_len:] # read attached data
+
+            print_func (f"PLUGIN TO CLIENT plugin_channel={plugin_channel} data={data}")
+
+            if plugin_channel == "MC|Brand": # LUNAR BYPASS
+                server_brand_name = Packet.decode_fields (data, (String,)) [0]
+                if server_brand_name.startswith ("Hypixel BungeeCord"):
+                    # server is telling client that we're hypixel... how about no
+
+                    print_func ("lunar client bypass")
+
+                    return False # drop packet
+
+            if plugin_channel == "badlion:mods": # BLC BYPASS
+                # server is telling client what badlion mods are ok
+
+                print_func ("badlion client bypass")
+
+                mods = json.loads (data.decode ())
+
+                # allow perspective mod, if it's present in config
+                if "Perspective" in mods: mods ["Perspective"] ["disabled"] = False
+
+                out_holder = io.BytesIO ()
+                String.write (ConnectionWrapper (DummySocket (out_holder)), plugin_channel)
+                to_client_func (s2c_plugin_message_packet_id, out_holder.getvalue () + json.dumps (mods).encode ()) # write modified packet
+                return False # drop original packet
+        # if packet_id in [0x00, 0x02, 0x03, 0x04, 0x12, 0x13, 0x15, 0x18, 0x1c, 0x2A, 0x21, 0x24, 0x26, 0x35, 0x3b]: return True
+        if packet_id in [0x00, 0x21, 0x26]: return True # Keep Alive, Chunk Data, Map Chunk Bulk
+        # print_func (f"{packet_id} {len (packet_data)} {packet_data}")
+        if packet_id == 0x01: print_func (f"--- JOIN GAME ---")
+        # if packet_id == 0x02: print_func (f"--- CHAT MESSAGE {packet_data} ---")
+        if packet_id == 0x07:
+            dimension, difficulty, gamemode, level_type = Packet.decode_fields (packet_data, (Int, UByte, UByte, String))
+            print_func (f"--- RESPAWN dimension={dimension} difficulty={difficulty} gamemode={gamemode} level_type={level_type}---")
+        # print (f"packet id {hex (packet_id)} data {packet_data}")
         if not self.finding_f_list: return True
 
         if packet_id != 0x02: return True # Chat Message

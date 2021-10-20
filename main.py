@@ -29,7 +29,7 @@ def main (argv):
     host = parse_host (argv [2])
     target = parse_host (argv [3])
     handler_class = parse_handler_class (argv [4]) if len (argv) >= 5 else None
-    Proxy (quiet = handler_class is not None, host = host, target = target, auth = auth, handler_class = handler_class)
+    Proxy (quiet = handler_class is not None, host = host, target = target, auth = auth, handler_class = handler_class).start ()
 
 if __name__ == "__main__":
     import sys

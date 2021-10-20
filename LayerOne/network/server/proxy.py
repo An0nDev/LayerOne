@@ -25,22 +25,65 @@ Host = Tuple [str, int] # IP, port
 ProxyAuth = Tuple [str, str] # UUID, access token
 
 class Proxy:
-    def __init__ (self, host: Host, target: Host, auth: ProxyAuth, handler_class: Optional [type (Handler)] = None, quiet: bool = False):
+    def __init__ (self, host: Host, target: Host, auth: ProxyAuth, handler_class: Optional [type (Handler)] = None, quiet: bool = False, forking: bool = False):
+        self.forking = forking
+
         self.quiet = quiet
         if not quiet: colorama.init ()
 
+        self.host = host
         self.target = target
         self.auth = auth
         self.handler_class = handler_class
 
-        server = socket.socket (family = socket.AF_INET, type = socket.SOCK_STREAM)
-        server.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind (host)
-        server.listen ()
+        self.server: Optional [socket.socket] = None
 
+        self.main_thread: Optional [Thread] = None
+        self.serverbound_handler_threads: list [Thread] = []
+        self.running = False
+        self.stopping = False
+    def start (self):
+        if self.running: return
+
+        self.server = socket.socket (family = socket.AF_INET, type = socket.SOCK_STREAM)
+        self.server.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind (self.host)
+        self.server.listen ()
+
+        self.running = True
+
+        if self.forking:
+            self.main_thread = Thread (target = self._run_loop)
+            self.main_thread.start ()
+        else: self._run_loop ()
+    def _run_loop (self):
         while True:
-            native_client_connection, client_address = server.accept ()
-            Thread (target = self.handler_serverbound, args = (native_client_connection, client_address)).start ()
+            try:
+                native_client_connection, client_address = self.server.accept ()
+            except OSError as os_error:
+                if self.stopping and os_error.errno == 22:
+                    break
+                raise
+            serverbound_handler_thread = Thread (target = self.handler_serverbound, args = (native_client_connection, client_address))
+            serverbound_handler_thread.start ()
+            self.serverbound_handler_threads.append (serverbound_handler_thread)
+    def stop (self):
+        if not self.running: return
+
+        self.stopping = True
+
+        self.server.shutdown (socket.SHUT_RDWR)
+        self.server.close ()
+
+        if self.forking:
+            self.main_thread.join ()
+
+        for serverbound_handler_thread in self.serverbound_handler_threads:
+            serverbound_handler_thread.join ()
+        self.serverbound_handler_threads = []
+
+        self.stopping = False
+        self.running = False
     def handler_serverbound (self, native_client_connection: socket.socket, client_address: Host):
         log_lock = threading.Lock ()
         def c2s_print (message: Any, end: str = "\n", generic: bool = True, meta: bool = False, force: bool = False) -> None:
